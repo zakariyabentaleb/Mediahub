@@ -1,0 +1,127 @@
+services:
+
+  # ──────────────────────────────────────────────
+  # PostgreSQL — shared DB server, one instance.
+  # Each service uses its own DATABASE inside it.
+  # ──────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: mediahub-postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      # Persist data between container restarts
+      - postgres_data:/var/lib/postgresql/data
+      # Init script: creates the 3 databases on first startup
+      - ./init-db.sql:/docker-entrypoint-initdb.d/init-db.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────
+  # STEP 1: Eureka — must start before everything else
+  # ──────────────────────────────────────────────
+  discovery-server:
+    build:
+      context: .
+      dockerfile: discovery-server/Dockerfile
+    container_name: discovery-server
+    ports:
+      - "8761:8761"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8761/actuator/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ──────────────────────────────────────────────
+  # STEP 2: Config Server — depends on Eureka
+  # ──────────────────────────────────────────────
+  config-server:
+    build:
+      context: .
+      dockerfile: config-server/Dockerfile
+    container_name: config-server
+    ports:
+      - "8888:8888"
+    depends_on:
+      discovery-server:
+        condition: service_healthy
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8888/actuator/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ──────────────────────────────────────────────
+  # STEP 3: Business services — depend on Eureka + Config Server + Postgres
+  # ──────────────────────────────────────────────
+  user-service:
+    build:
+      context: .
+      dockerfile: user-service/Dockerfile
+    container_name: user-service
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+    environment:
+      # Override the Eureka URL to use the Docker service name instead of localhost
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      # Override the Config Server URL to use the Docker service name
+      SPRING_CONFIG_IMPORT: "optional:configserver:http://config-server:8888"
+      # Override the datasource URL to use the Docker service name
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/userdb
+
+  media-service:
+    build:
+      context: .
+      dockerfile: media-service/Dockerfile
+    container_name: media-service
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      SPRING_CONFIG_IMPORT: "optional:configserver:http://config-server:8888"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/mediadb
+
+  subscription-service:
+    build:
+      context: .
+      dockerfile: subscription-service/Dockerfile
+    container_name: subscription-service
+    ports:
+      - "8083:8083"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      discovery-server:
+        condition: service_healthy
+      config-server:
+        condition: service_healthy
+    environment:
+      EUREKA_CLIENT_SERVICEURL_DEFAULTZONE: http://discovery-server:8761/eureka/
+      SPRING_CONFIG_IMPORT: "optional:configserver:http://config-server:8888"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/subscriptiondb
+
+volumes:
+  postgres_data:
