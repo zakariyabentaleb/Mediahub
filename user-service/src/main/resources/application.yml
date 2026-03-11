@@ -1,0 +1,11 @@
+spring:
+  application:
+    name: user-service
+
+  config:
+    # On startup, fetch config from the Config Server before doing anything else.
+    # "optional:" means: if the Config Server is down, don't crash — use local config only.
+    import: "optional:configserver:http://localhost:8888"
+
+server:
+  port: 8081

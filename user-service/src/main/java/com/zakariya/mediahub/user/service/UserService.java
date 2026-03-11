@@ -1,0 +1,84 @@
+package com.zakariya.mediahub.user.service;
+
+import com.zakariya.mediahub.user.client.SubscriptionClient;
+import com.zakariya.mediahub.user.dto.SubscriptionDto;
+import com.zakariya.mediahub.user.dto.UserDto;
+import com.zakariya.mediahub.user.dto.UserRequest;
+import com.zakariya.mediahub.user.entity.User;
+import com.zakariya.mediahub.user.repository.UserRepository;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.web.reactive.function.client.WebClient;
+
+import java.util.List;
+@Service
+@RequiredArgsConstructor
+public class UserService {
+
+    private final UserRepository userRepository;
+    private final SubscriptionClient subscriptionClient;
+    private final WebClient webClient;
+
+    public List<UserDto> getAllUsers() {
+        return userRepository.findAll()
+                .stream()
+                .map(this::toDto)
+                .toList();
+    }
+
+    public UserDto getUserById(Long id) {
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("User not found with id: " + id));
+        return toDto(user);
+    }
+
+    public UserDto updateUser(Long id, UserRequest request) {
+        User existing = userRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("User not found with id: " + id));
+
+        existing.setName(request.getName());
+        existing.setEmail(request.getEmail());
+        existing.setRole(request.getRole());
+
+        return toDto(userRepository.save(existing));
+    }
+
+    public void deleteUser(Long id) {
+        if (!userRepository.existsById(id)) {
+            throw new RuntimeException("User not found with id: " + id);
+        }
+        userRepository.deleteById(id);
+    }
+
+    public UserDto createUser(UserRequest request) {
+        User user = User.builder()
+                .name(request.getName())
+                .email(request.getEmail())
+                .role(request.getRole())
+                .build();
+        return toDto(userRepository.save(user));
+    }
+
+    public SubscriptionDto getUserSubscription(Long userId) {
+        return subscriptionClient.getSubscriptionByUserId(userId);
+    }
+
+    public List<?> getAvailableMedia() {
+        return webClient
+                .get()
+                .uri("http://media-service/media")
+                .retrieve()
+                .bodyToFlux(Object.class)
+                .collectList()
+                .block();
+    }
+
+    private UserDto toDto(User user) {
+        return UserDto.builder()
+                .id(user.getId())
+                .name(user.getName())
+                .email(user.getEmail())
+                .role(user.getRole())
+                .build();
+    }
+}
